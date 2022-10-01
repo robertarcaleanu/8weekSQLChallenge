@@ -1,0 +1,188 @@
+---
+title: "R and SQL"
+author: Robert Arcaleanu 
+format:
+  html:
+    theme: vapor
+    toc: true
+    html-math-method: katex
+    code-fold: true
+    code-tools: true
+---
+# 8 week SQL Challenge 
+This webpage intends to show how to access `Postgre` using `R` while practicing SQL. In this case, I decided to try Danny Ma's 8 Week SQL Challenge <https://8weeksqlchallenge.com/getting-started/>. It consists of 8 use cases with several questions each one.
+
+The required libraries are shown below:
+
+```{r}
+#| echo: true
+#| warning: false
+library(RPostgreSQL)
+library(RPostgres)
+```
+
+First of all we need to access the database. This can be done using `dbConnect`. Note that some parameters must be specified:
+
+```{r}
+#| echo: true
+#| eval: true
+db_name <- "Dany-8WeekChallenge"
+host_db <- "localhost"
+db_port <- "5432"
+db_user <- "postgres"
+db_password <- Sys.getenv("PostgreSQL-pwd")
+
+con <- dbConnect(RPostgres::Postgres(), dbname = db_name, host=host_db, port=db_port,
+                 user=db_user, password=db_password)
+
+```
+
+
+::: {.panel-tabset}
+
+## Week 1 - Danny's Diner
+
+> What is the total amount each customer spent at the restaurant?
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, sum(price) AS amount FROM(
+                 SELECT sales.customer_id, sales.product_id, menu.price 
+                   FROM dannys_diner.sales 
+                   INNER JOIN dannys_diner.menu ON sales.product_id = menu.product_id)
+                 AS total 
+                 GROUP BY customer_id
+                 ORDER BY customer_id")
+
+```
+
+> How many days has each customer visited the restaurant?
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, COUNT(DISTINCT order_date) AS visits
+                 FROM dannys_diner.sales
+                 GROUP BY customer_id")
+
+```
+
+> What was the first item from the menu purchased by each customer?
+
+```{r}
+dbGetQuery(con, "SELECT DISTINCT ON(customer_id) customer_id, product_id, product_name FROM(
+                 SELECT sales.customer_id, sales.product_id, sales.order_date, menu.product_name
+                   FROM dannys_diner.sales
+                   INNER JOIN dannys_diner.menu ON sales.product_id = menu.product_id
+                   ORDER BY sales.customer_id, sales.order_date, sales.product_id )
+                 AS total")
+
+```
+
+> What is the most purchased item on the menu and how many times was it purchased by all customers?
+
+```{r}
+dbGetQuery(con, "SELECT sales.product_id, COUNT(*) AS purchase, customer_id 
+                 FROM dannys_diner.sales 
+                 GROUP BY product_id, customer_id
+                 HAVING product_id = (
+                  SELECT product_id FROM (
+                    SELECT COUNT(*), product_id 
+                    FROM dannys_diner.sales 
+                      GROUP BY product_id 
+                      ORDER BY COUNT(*) DESC) 
+                  AS prod LIMIT 1)")
+
+```
+
+> Which item was the most popular for each customer?
+
+```{r}
+dbGetQuery(con, "SELECT DISTINCT ON(customer_id) customer_id, product_name FROM(
+                  SELECT COUNT(*), customer_id, product_name FROM(
+                    SELECT customer_id, sales.product_id, menu.product_name
+                    FROM dannys_diner.sales
+                    INNER JOIN dannys_diner.menu ON sales.product_id = menu.product_id) AS total
+                  GROUP BY customer_id, product_name
+                  ORDER BY customer_id, COUNT(*) DESC) AS Final_total")
+```
+
+> Which item was purchased first by the customer after they became a member?
+
+We create a view containing the information regarding the `customer_id` and `join_date`. This new table will ease the queries:
+```{r}
+#| warning: false
+#| eval: false
+#| echo: true
+dbGetQuery(con, "CREATE OR REPLACE VIEW alldata AS 
+                  SELECT sales.customer_id, order_date, sales.product_id, menu.product_name, menu.price, members.join_date
+                  FROM  dannys_diner.sales
+                    LEFT JOIN dannys_diner.menu ON sales.product_id = menu.product_id
+                    LEFT JOIN dannys_diner.members ON sales.customer_id = members.customer_id
+                  ORDER BY customer_id, order_date, product_id")
+```
+Now, let's get the results:
+
+```{r}
+dbGetQuery(con, "SELECT DISTINCT ON(customer_id) customer_id, product_name
+                 FROM alldata
+                  WHERE order_date >= join_date")
+``` 
+
+> Which item was purchased just before the customer became a member?
+
+```{r}
+dbGetQuery(con, "SELECT DISTINCT ON(customer_id) customer_id, product_name FROM(
+                  SELECT customer_id, product_name, order_date
+                  FROM alldata
+                    WHERE order_date < join_date
+                  ORDER BY customer_id, order_date DESC) AS total")
+```
+
+> What is the total items and amount spent for each member before they became a member?
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, COUNT(*) AS total_items, SUM(price) AS spent
+                 FROM alldata WHERE order_date < join_date
+                  GROUP BY customer_id")
+```
+
+> If each $1 spent equates to 10 points and sushi has a 2x points multiplier - how many points would each customer have?
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, sum(point) AS total_points FROM(
+                 SELECT customer_id, price, product_name,
+                 CASE
+                  WHEN product_name = 'sushi' THEN price*10*2
+                  ELSE price*10
+                 END AS point
+                 FROM alldata) AS total
+                 GROUP BY customer_id")
+```
+
+
+
+> In the first week after a customer joins the program (including their join date) they earn 2x points on all items, not just sushi - how many points do customer A and B have at the end of January?
+
+```{r}
+dbGetQuery(con, "SELECT customer_id, sum(point) AS total_points FROM(
+                 SELECT customer_id, price,product_name, order_date, join_date,
+                 CASE
+                  WHEN product_name = 'sushi' OR order_date BETWEEN join_date AND join_date + 7 THEN price*10*2
+                  ELSE price*10*2
+                 END AS point
+                 FROM alldata WHERE join_date IS NOT NULL AND order_date < '2021-02-01') AS total
+                 GROUP BY customer_id")
+```
+
+Finally, we must disconnect the database:
+```{r}
+#| code-fold: false
+dbDisconnect(con)
+```
+## Week 2 - Pizza runner
+
+Work in progress...
+
+
+![](work_in_progress.png){fig-align="center"}
+
+
+:::
